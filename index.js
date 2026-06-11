@@ -8,25 +8,22 @@ const client = new Client({
     ]
 });
 
-const BET_CHANNEL_ID = '1514604229266767872';
-
-// Хранилище игр по каналам
-// games.get(channelId) = { maxPosition: 10, players: { 1: "id", 2: "id", ... } }
+// Хранилище игр по каналам (канал = своя ветка)
 const games = new Map();
 
 // Команды
 const commands = [
     {
         name: 'game',
-        description: 'Создать новую игру (по умолчанию до 10 позиций)'
+        description: 'Создать новую игру в этой ветке (очищает позиции)'
     },
     {
         name: 'add',
-        description: 'Добавить новые позиции (например /add 20 или /add 1-30)',
+        description: 'Добавить новые позиции (например /add 20)',
         options: [
             {
                 name: 'positions',
-                description: 'Номер или диапазон (например 20 или 1-30)',
+                description: 'Число (например 20)',
                 type: 3,
                 required: true
             }
@@ -34,11 +31,11 @@ const commands = [
     },
     {
         name: 'clear',
-        description: 'Очистить все позиции и начать заново'
+        description: 'Очистить все позиции в этой ветке'
     },
     {
         name: 'show',
-        description: 'Показать текущую таблицу позиций'
+        description: 'Показать текущую таблицу'
     },
     {
         name: 'remove',
@@ -56,7 +53,6 @@ const commands = [
 
 client.once('ready', async () => {
     console.log(`✅ Бот запущен! Имя: ${client.user.tag}`);
-    console.log(`📡 Канал для ставок: ${BET_CHANNEL_ID}`);
     
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
     try {
@@ -73,12 +69,18 @@ client.on('interactionCreate', async (interaction) => {
     
     const channelId = interaction.channel.id;
     
+    // /game - создает новую игру в этой ветке (канале)
     if (interaction.commandName === 'game') {
         games.set(channelId, { maxPosition: 10, players: {} });
         await showPositions(interaction.channel);
-        await interaction.reply({ content: '🎮 Новая игра создана! (позиции 1-10, можно расширить командой /add)', ephemeral: true });
+        await interaction.reply({ 
+            content: '🎮 **Новая игра создана в этой ветке!**\nПишите числа чтобы занять позиции.', 
+            ephemeral: true 
+        });
+        return;
     }
     
+    // /add - расширить позиции
     if (interaction.commandName === 'add') {
         let game = games.get(channelId);
         if (!game) {
@@ -87,39 +89,50 @@ client.on('interactionCreate', async (interaction) => {
         }
         
         const input = interaction.options.getString('positions');
-        let newMax = 0;
-        
-        if (input.includes('-')) {
-            const parts = input.split('-');
-            newMax = parseInt(parts[1]);
-        } else {
-            newMax = parseInt(input);
-        }
+        let newMax = parseInt(input);
         
         if (isNaN(newMax) || newMax <= game.maxPosition) {
-            await interaction.reply({ content: `❌ Нужно число больше текущего максимума (${game.maxPosition}) или диапазон вида 1-${game.maxPosition + 10}`, ephemeral: true });
+            await interaction.reply({ 
+                content: `❌ Нужно число больше ${game.maxPosition}`, 
+                ephemeral: true 
+            });
             return;
         }
         
         game.maxPosition = newMax;
         await showPositions(interaction.channel);
-        await interaction.reply({ content: `✅ Позиции расширены до ${newMax}!`, ephemeral: true });
+        await interaction.reply({ 
+            content: `✅ Позиции расширены до ${newMax}!`, 
+            ephemeral: true 
+        });
+        return;
     }
     
+    // /clear - очистить позиции
     if (interaction.commandName === 'clear') {
         const game = games.get(channelId);
         if (game) {
             game.players = {};
             await showPositions(interaction.channel);
         }
-        await interaction.reply({ content: '🧹 Все позиции очищены!', ephemeral: true });
+        await interaction.reply({ 
+            content: '🧹 Все позиции очищены!', 
+            ephemeral: true 
+        });
+        return;
     }
     
+    // /show - показать таблицу
     if (interaction.commandName === 'show') {
         await showPositions(interaction.channel);
-        await interaction.reply({ content: '📊 Таблица обновлена', ephemeral: true });
+        await interaction.reply({ 
+            content: '📊 Таблица обновлена', 
+            ephemeral: true 
+        });
+        return;
     }
     
+    // /remove - убрать игрока
     if (interaction.commandName === 'remove') {
         const game = games.get(channelId);
         if (game) {
@@ -127,99 +140,100 @@ client.on('interactionCreate', async (interaction) => {
             if (game.players[position]) {
                 delete game.players[position];
                 await showPositions(interaction.channel);
-                await interaction.reply({ content: `✅ Позиция ${position} освобождена`, ephemeral: true });
+                await interaction.reply({ 
+                    content: `✅ Позиция ${position} освобождена`, 
+                    ephemeral: true 
+                });
             } else {
-                await interaction.reply({ content: `❌ Позиция ${position} и так свободна`, ephemeral: true });
+                await interaction.reply({ 
+                    content: `❌ Позиция ${position} свободна`, 
+                    ephemeral: true 
+                });
             }
         } else {
-            await interaction.reply({ content: '❌ Нет активной игры. Создай /game', ephemeral: true });
+            await interaction.reply({ 
+                content: '❌ Нет игры. Создай /game', 
+                ephemeral: true 
+            });
         }
+        return;
     }
 });
 
 // Обработка сообщений с цифрами
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
-    if (message.channel.id !== BET_CHANNEL_ID) return;
     
     const position = parseInt(message.content.trim());
     if (isNaN(position)) return;
     
-    // Удаляем сообщение игрока
-    await message.delete().catch(console.error);
-    
-    // Получаем или создаем игру
+    // Получаем или создаем игру для ЭТОГО канала (ветки)
     let game = games.get(message.channel.id);
     if (!game) {
         game = { maxPosition: 10, players: {} };
         games.set(message.channel.id, game);
     }
     
-    // Если позиция больше максимума - автоматически расширяем
+    // Удаляем сообщение игрока
+    await message.delete().catch(console.error);
+    
+    // Автоматическое расширение
     if (position > game.maxPosition) {
         game.maxPosition = position;
-        await message.channel.send(`📈 **Автоматическое расширение!** Максимум увеличен до ${position}`);
+        await message.channel.send(`📈 **Расширение до ${position}!**`);
     }
     
-    // Проверяем, свободно ли место
+    // Проверка занято
     if (game.players[position]) {
-        await message.author.send(`❌ Позиция **${position}** уже занята игроком <@${game.players[position]}>!`)
-            .catch(() => console.log('Не удалось отправить ЛС'));
+        await message.author.send(`❌ Позиция ${position} занята <@${game.players[position]}>`)
+            .catch(() => {});
         return;
     }
     
-    // Ставим игрока на позицию
+    // Занимаем позицию
     game.players[position] = message.author.id;
-    
-    // Показываем обновленную таблицу
     await showPositions(message.channel);
 });
 
-// Функция для отображения позиций
+// Показать таблицу
 async function showPositions(channel) {
     const game = games.get(channel.id) || { maxPosition: 10, players: {} };
     const players = game.players;
     const maxPos = game.maxPosition;
-    
     const filled = Object.keys(players).length;
     
-    // Находим занятые позиции и сортируем
-    const occupiedPositions = Object.keys(players).map(Number).sort((a, b) => a - b);
+    const occupied = Object.keys(players).map(Number).sort((a, b) => a - b);
     
-    // Показываем только занятые позиции + сколько всего свободно
     const lines = [];
     lines.push('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    lines.push('🏆 **БИТВА СЕМЕЙ** 🏆');
+    lines.push(`🏆 **ВЕТКА: #${channel.name}** 🏆`);
     lines.push('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     lines.push('');
     
-    for (const pos of occupiedPositions) {
+    for (const pos of occupied) {
         lines.push(`**${pos}.** 🟢 <@${players[pos]}>`);
     }
     
-    if (occupiedPositions.length === 0) {
+    if (occupied.length === 0) {
         lines.push('⚪ Пока никого нет');
     }
     
     lines.push('');
     lines.push('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     lines.push(`📊 **Занято:** ${filled} / ${maxPos}`);
-    lines.push(`📈 **Диапазон:** 1-${maxPos} (расширяется автоматически)`);
-    lines.push('');
-    lines.push('💡 **Как играть:**');
-    lines.push('• Напиши число чтобы занять позицию');
-    lines.push('• Если числа нет в таблице — оно добавится');
-    lines.push('• Команды: `/add 50` расширить, `/clear` очистить');
+    lines.push('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    lines.push('💡 **Пиши число** чтобы занять позицию');
+    lines.push('📌 `/game` - новая игра в этой ветке');
+    lines.push('📌 `/add 50` - расширить');
     lines.push('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     
     const embed = {
         title: '🎮 ТАБЛИЦА ПОЗИЦИЙ',
         description: lines.join('\n'),
-        color: 0x00FF00,
-        footer: { text: 'Сообщения автоматически удаляются 🤫' }
+        color: 0x00FF00
     };
     
-    // Удаляем старое сообщение бота
+    // Удаляем старое сообщение
     const messages = await channel.messages.fetch({ limit: 10 });
     const botMessages = messages.filter(m => m.author.id === channel.client.user.id);
     for (const botMessage of botMessages.values()) {
