@@ -8,7 +8,7 @@ const client = new Client({
     ]
 });
 
-const BET_CHANNEL_ID = '909135900754198538';
+const BET_CHANNEL_ID = '1514604229266767872';
 
 // Хранилище игр по каналам
 // games.get(channelId) = { maxPosition: 10, players: { 1: "id", 2: "id", ... } }
