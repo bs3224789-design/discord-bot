@@ -8,23 +8,31 @@ const client = new Client({
     ]
 });
 
-// Хранилище игр по каналам (канал = своя ветка)
+// Хранилище игр по каналам
 const games = new Map();
 
 // Команды
 const commands = [
     {
         name: 'game',
-        description: 'Создать новую игру в этой ветке (очищает позиции)'
-    },
-    {
-        name: 'add',
-        description: 'Добавить новые позиции (например /add 20)',
+        description: 'Создать новую игру (по умолчанию 10 позиций)',
         options: [
             {
                 name: 'positions',
-                description: 'Число (например 20)',
-                type: 3,
+                description: 'Количество позиций (например 20)',
+                type: 4,
+                required: false
+            }
+        ]
+    },
+    {
+        name: 'add',
+        description: 'Добавить новые позиции (например /add 30)',
+        options: [
+            {
+                name: 'positions',
+                description: 'Количество позиций',
+                type: 4,
                 required: true
             }
         ]
@@ -69,12 +77,17 @@ client.on('interactionCreate', async (interaction) => {
     
     const channelId = interaction.channel.id;
     
-    // /game - создает новую игру в этой ветке (канале)
+    // /game [количество] - создает игру с указанным количеством позиций
     if (interaction.commandName === 'game') {
-        games.set(channelId, { maxPosition: 10, players: {} });
+        let maxPos = 10; // по умолчанию
+        const inputPos = interaction.options.getInteger('positions');
+        if (inputPos && inputPos > 0) {
+            maxPos = inputPos;
+        }
+        games.set(channelId, { maxPosition: maxPos, players: {} });
         await showPositions(interaction.channel);
         await interaction.reply({ 
-            content: '🎮 **Новая игра создана в этой ветке!**\nПишите числа чтобы занять позиции.', 
+            content: `🎮 **Новая игра создана!** Позиции: 1-${maxPos}\nПиши любое число чтобы занять место.`, 
             ephemeral: true 
         });
         return;
@@ -88,8 +101,7 @@ client.on('interactionCreate', async (interaction) => {
             games.set(channelId, game);
         }
         
-        const input = interaction.options.getString('positions');
-        let newMax = parseInt(input);
+        const newMax = interaction.options.getInteger('positions');
         
         if (isNaN(newMax) || newMax <= game.maxPosition) {
             await interaction.reply({ 
@@ -167,7 +179,7 @@ client.on('messageCreate', async (message) => {
     const position = parseInt(message.content.trim());
     if (isNaN(position)) return;
     
-    // Получаем или создаем игру для ЭТОГО канала (ветки)
+    // Получаем или создаем игру для ЭТОГО канала
     let game = games.get(message.channel.id);
     if (!game) {
         game = { maxPosition: 10, players: {} };
@@ -177,15 +189,16 @@ client.on('messageCreate', async (message) => {
     // Удаляем сообщение игрока
     await message.delete().catch(console.error);
     
-    // Автоматическое расширение
+    // Проверка: позиция не больше максимума
     if (position > game.maxPosition) {
-        game.maxPosition = position;
-        await message.channel.send(`📈 **Расширение до ${position}!**`);
+        await message.author.send(`❌ Максимальная позиция сейчас ${game.maxPosition}. Используй /add чтобы расширить.`)
+            .catch(() => {});
+        return;
     }
     
-    // Проверка занято
+    // Проверка: свободно ли место
     if (game.players[position]) {
-        await message.author.send(`❌ Позиция ${position} занята <@${game.players[position]}>`)
+        await message.author.send(`❌ Позиция **${position}** уже занята <@${game.players[position]}>!`)
             .catch(() => {});
         return;
     }
@@ -223,8 +236,8 @@ async function showPositions(channel) {
     lines.push(`📊 **Занято:** ${filled} / ${maxPos}`);
     lines.push('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     lines.push('💡 **Пиши число** чтобы занять позицию');
-    lines.push('📌 `/game` - новая игра в этой ветке');
-    lines.push('📌 `/add 50` - расширить');
+    lines.push('📌 `/game 20` - новая игра на 20 мест');
+    lines.push('📌 `/add 50` - расширить до 50');
     lines.push('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     
     const embed = {
@@ -233,7 +246,7 @@ async function showPositions(channel) {
         color: 0x00FF00
     };
     
-    // Удаляем старое сообщение
+    // Удаляем старое сообщение бота
     const messages = await channel.messages.fetch({ limit: 10 });
     const botMessages = messages.filter(m => m.author.id === channel.client.user.id);
     for (const botMessage of botMessages.values()) {
