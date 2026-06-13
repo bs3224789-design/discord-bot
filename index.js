@@ -8,9 +8,13 @@ const client = new Client({
     ]
 });
 
+// Хранилище игр
 const games = new Map();
+
+// ЛОГОТИП (твоя картинка)
 const LOGO_URL = 'https://i.imgur.com/hjG5K0T.png';
 
+// Команды
 const commands = [
     {
         name: 'game',
@@ -55,10 +59,6 @@ const commands = [
                 required: true
             }
         ]
-    },
-    {
-        name: 'pingall',
-        description: 'Тегнуть @everyone и показать таблицу'
     }
 ];
 
@@ -74,6 +74,7 @@ client.once('ready', async () => {
     }
 });
 
+// Обработка команд
 client.on('interactionCreate', async (interaction) => {
     if (interaction.isCommand()) {
         const channelId = interaction.channel.id;
@@ -129,34 +130,9 @@ client.on('interactionCreate', async (interaction) => {
             }
             return;
         }
-        
-        // /pingall - исправлен (быстрый ответ)
-        if (interaction.commandName === 'pingall') {
-            const game = games.get(channelId);
-            
-            // Сначала отвечаем (быстро, чтобы не было ошибки)
-            await interaction.reply({ content: '📢 Оповещение отправляется...', ephemeral: true });
-            
-            if (!game) {
-                await interaction.followUp({ content: '❌ Нет активной игры. Создай /game', ephemeral: true });
-                return;
-            }
-            
-            const filled = Object.keys(game.players).length;
-            const maxPos = game.maxPosition;
-            
-            // Отправляем @everyone
-            await interaction.channel.send(`@everyone\n🎮 **БИТВА СЕМЕЙ!** 🎮\n📊 Занято ${filled} из ${maxPos} позиций\n⚔️ Заходи занять место! Используй /game ${maxPos}`);
-            
-            // Показываем таблицу
-            await showGameMenu(interaction.channel);
-            
-            await interaction.followUp({ content: '✅ Оповещение отправлено!', ephemeral: true });
-            return;
-        }
     }
     
-    // Обработка кнопок
+    // Обработка нажатий на кнопки
     if (interaction.isButton()) {
         const position = parseInt(interaction.customId);
         if (isNaN(position)) return;
@@ -183,24 +159,28 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
+// Меню с кнопками и логотипом
 async function showGameMenu(channel) {
     const game = games.get(channel.id) || { maxPosition: 10, players: {} };
     const players = game.players;
     const maxPos = game.maxPosition;
     const filled = Object.keys(players).length;
+    
     const occupied = Object.keys(players).map(Number).sort((a, b) => a - b);
     
+    // Создаем красивое сообщение с ЛОГОТИПОМ
     const embed = new EmbedBuilder()
         .setTitle('🎮 БИТВА СЕМЕЙ 🎮')
         .setColor(0xFF5500)
-        .setThumbnail(LOGO_URL)
+        .setThumbnail(LOGO_URL)  // <--- ТВОЙ ЛОГОТИП ТУТ
         .setDescription(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n🏆 **ВЕТКА: #${channel.name}**\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`)
         .addFields(
             { name: '📊 ЗАНЯТЫЕ ПОЗИЦИИ', value: occupied.length ? occupied.map(p => `**${p}.** <@${players[p]}>`).join('\n') : '⚪ Пока никого нет', inline: false },
-            { name: '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', value: `📊 **Занято:** ${filled} / ${maxPos}\n💡 **Нажми на кнопку с числом** чтобы занять позицию\n🔔 `/pingall` - позвать всех`, inline: false }
+            { name: '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', value: `📊 **Занято:** ${filled} / ${maxPos}\n💡 **Нажми на кнопку с числом** чтобы занять позицию`, inline: false }
         )
         .setFooter({ text: 'Битва Семей | Нажми на число' });
     
+    // Создаем кнопки (по 5 в ряд)
     const rows = [];
     let currentRow = new ActionRowBuilder();
     let count = 0;
@@ -224,6 +204,7 @@ async function showGameMenu(channel) {
     
     if (count > 0) rows.push(currentRow);
     
+    // Удаляем старое сообщение
     const messages = await channel.messages.fetch({ limit: 10 });
     const botMessages = messages.filter(m => m.author.id === channel.client.user.id);
     for (const botMessage of botMessages.values()) {
@@ -232,6 +213,7 @@ async function showGameMenu(channel) {
         }
     }
     
+    // Отправляем новое меню с логотипом
     await channel.send({ embeds: [embed], components: rows });
 }
 
