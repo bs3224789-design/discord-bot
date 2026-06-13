@@ -159,7 +159,7 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
-// Меню с кнопками и логотипом
+// Меню с кнопками, логотипом и ЧЕРНОЙ ПОЛОСОЙ ПРОГРЕССА
 async function showGameMenu(channel) {
     const game = games.get(channel.id) || { maxPosition: 10, players: {} };
     const players = game.players;
@@ -168,12 +168,29 @@ async function showGameMenu(channel) {
     
     const occupied = Object.keys(players).map(Number).sort((a, b) => a - b);
     
-    // Создаем красивое сообщение с ЛОГОТИПОМ
+    // ВЫЧИСЛЯЕМ ПРОЦЕНТ ЗАНЯТЫХ МЕСТ
+    const percent = (filled / maxPos) * 100;
+    const percentRounded = Math.round(percent);
+    
+    // СОЗДАЕМ ЧЕРНУЮ ПОЛОСУ (⬛ = занято, ⬜ = свободно)
+    const barLength = 20; // длина полосы в символах
+    const filledBars = Math.round((percent / 100) * barLength);
+    const emptyBars = barLength - filledBars;
+    const progressBar = '⬛'.repeat(filledBars) + '⬜'.repeat(emptyBars);
+    
+    // ФОРМИРУЕМ ОПИСАНИЕ С ПОЛОСОЙ ВВЕРХУ
+    const description = 
+        `⬛ **ПРОГРЕСС:** ${progressBar} **${percentRounded}%** ⬜\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `🏆 **ВЕТКА: #${channel.name}**\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+    
+    // Создаем Embed с БЕЛЫМ фоном
     const embed = new EmbedBuilder()
         .setTitle('🎮 БИТВА СЕМЕЙ 🎮')
-        .setColor(0xFF5500)
-        .setThumbnail(LOGO_URL)  // <--- ТВОЙ ЛОГОТИП ТУТ
-        .setDescription(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n🏆 **ВЕТКА: #${channel.name}**\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`)
+        .setColor(0xFFFFFF)  // БЕЛЫЙ ЦВЕТ (раньше был оранжевый)
+        .setThumbnail(LOGO_URL)
+        .setDescription(description)
         .addFields(
             { name: '📊 ЗАНЯТЫЕ ПОЗИЦИИ', value: occupied.length ? occupied.map(p => `**${p}.** <@${players[p]}>`).join('\n') : '⚪ Пока никого нет', inline: false },
             { name: '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', value: `📊 **Занято:** ${filled} / ${maxPos}\n💡 **Нажми на кнопку с числом** чтобы занять позицию`, inline: false }
@@ -204,7 +221,7 @@ async function showGameMenu(channel) {
     
     if (count > 0) rows.push(currentRow);
     
-    // Удаляем старое сообщение
+    // Удаляем старое сообщение бота
     const messages = await channel.messages.fetch({ limit: 10 });
     const botMessages = messages.filter(m => m.author.id === channel.client.user.id);
     for (const botMessage of botMessages.values()) {
@@ -213,7 +230,7 @@ async function showGameMenu(channel) {
         }
     }
     
-    // Отправляем новое меню с логотипом
+    // Отправляем новое меню
     await channel.send({ embeds: [embed], components: rows });
 }
 
