@@ -11,6 +11,9 @@ const client = new Client({
 // Хранилище игр
 const games = new Map();
 
+// ЛОГОТИП (твоя картинка)
+const LOGO_URL = 'https://i.imgur.com/hjG5K0T.png';
+
 // Команды
 const commands = [
     {
@@ -156,7 +159,7 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
-// Меню с кнопками
+// Меню с кнопками и логотипом
 async function showGameMenu(channel) {
     const game = games.get(channel.id) || { maxPosition: 10, players: {} };
     const players = game.players;
@@ -165,10 +168,11 @@ async function showGameMenu(channel) {
     
     const occupied = Object.keys(players).map(Number).sort((a, b) => a - b);
     
-    // Создаем красивое сообщение
+    // Создаем красивое сообщение с ЛОГОТИПОМ
     const embed = new EmbedBuilder()
         .setTitle('🎮 БИТВА СЕМЕЙ 🎮')
-        .setColor(0x00FF00)
+        .setColor(0xFF5500)
+        .setThumbnail(LOGO_URL)  // <--- ТВОЙ ЛОГОТИП ТУТ
         .setDescription(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n🏆 **ВЕТКА: #${channel.name}**\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`)
         .addFields(
             { name: '📊 ЗАНЯТЫЕ ПОЗИЦИИ', value: occupied.length ? occupied.map(p => `**${p}.** <@${players[p]}>`).join('\n') : '⚪ Пока никого нет', inline: false },
@@ -181,7 +185,7 @@ async function showGameMenu(channel) {
     let currentRow = new ActionRowBuilder();
     let count = 0;
     
-    for (let i = 1; i <= maxPos && i <= 30; i++) { // максимум 30 кнопок (чтобы не ломало)
+    for (let i = 1; i <= maxPos && i <= 30; i++) {
         const button = new ButtonBuilder()
             .setCustomId(i.toString())
             .setLabel(i.toString())
@@ -209,7 +213,7 @@ async function showGameMenu(channel) {
         }
     }
     
-    // Отправляем новое меню
+    // Отправляем новое меню с логотипом
     await channel.send({ embeds: [embed], components: rows });
 }
 
