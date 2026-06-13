@@ -159,7 +159,7 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
-// Меню с кнопками, логотипом и ЧЕРНОЙ ПОЛОСОЙ ПРОГРЕССА
+// Меню с кнопками и логотипом (БЕЗ прогресс-полосы)
 async function showGameMenu(channel) {
     const game = games.get(channel.id) || { maxPosition: 10, players: {} };
     const players = game.players;
@@ -168,29 +168,12 @@ async function showGameMenu(channel) {
     
     const occupied = Object.keys(players).map(Number).sort((a, b) => a - b);
     
-    // ВЫЧИСЛЯЕМ ПРОЦЕНТ ЗАНЯТЫХ МЕСТ
-    const percent = (filled / maxPos) * 100;
-    const percentRounded = Math.round(percent);
-    
-    // СОЗДАЕМ ЧЕРНУЮ ПОЛОСУ (⬛ = занято, ⬜ = свободно)
-    const barLength = 20; // длина полосы в символах
-    const filledBars = Math.round((percent / 100) * barLength);
-    const emptyBars = barLength - filledBars;
-    const progressBar = '⬛'.repeat(filledBars) + '⬜'.repeat(emptyBars);
-    
-    // ФОРМИРУЕМ ОПИСАНИЕ С ПОЛОСОЙ ВВЕРХУ
-    const description = 
-        `⬛ **ПРОГРЕСС:** ${progressBar} **${percentRounded}%** ⬜\n` +
-        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-        `🏆 **ВЕТКА: #${channel.name}**\n` +
-        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-    
-    // Создаем Embed с БЕЛЫМ фоном
+    // Создаем красивое сообщение с ЛОГОТИПОМ и БЕЛЫМ фоном
     const embed = new EmbedBuilder()
         .setTitle('🎮 БИТВА СЕМЕЙ 🎮')
-        .setColor(0xFFFFFF)  // БЕЛЫЙ ЦВЕТ (раньше был оранжевый)
+        .setColor(0xFFFFFF)  // БЕЛЫЙ ЦВЕТ
         .setThumbnail(LOGO_URL)
-        .setDescription(description)
+        .setDescription(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n🏆 **ВЕТКА: #${channel.name}**\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`)
         .addFields(
             { name: '📊 ЗАНЯТЫЕ ПОЗИЦИИ', value: occupied.length ? occupied.map(p => `**${p}.** <@${players[p]}>`).join('\n') : '⚪ Пока никого нет', inline: false },
             { name: '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', value: `📊 **Занято:** ${filled} / ${maxPos}\n💡 **Нажми на кнопку с числом** чтобы занять позицию`, inline: false }
