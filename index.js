@@ -11,7 +11,7 @@ const client = new Client({
 // Хранилище игр
 const games = new Map();
 
-// ЛОГОТИП (твоя картинка)
+// ЛОГОТИП
 const LOGO_URL = 'https://i.imgur.com/hjG5K0T.png';
 
 // Команды
@@ -59,6 +59,10 @@ const commands = [
                 required: true
             }
         ]
+    },
+    {
+        name: 'pingall',
+        description: 'Тегнуть @everyone и показать таблицу'
     }
 ];
 
@@ -130,6 +134,27 @@ client.on('interactionCreate', async (interaction) => {
             }
             return;
         }
+        
+        // НОВАЯ КОМАНДА: /pingall
+        if (interaction.commandName === 'pingall') {
+            const game = games.get(channelId);
+            if (!game) {
+                await interaction.reply({ content: '❌ Нет активной игры. Создай /game', ephemeral: true });
+                return;
+            }
+            
+            const filled = Object.keys(game.players).length;
+            const maxPos = game.maxPosition;
+            
+            // Тегаем @everyone
+            await interaction.channel.send(`@everyone\n🎮 **БИТВА СЕМЕЙ!** 🎮\n📊 Занято ${filled} из ${maxPos} позиций\n⚔️ Заходи занять место! /game ${maxPos}`);
+            
+            // Показываем таблицу
+            await showGameMenu(interaction.channel);
+            
+            await interaction.reply({ content: '✅ Оповещение отправлено!', ephemeral: true });
+            return;
+        }
     }
     
     // Обработка нажатий на кнопки
@@ -168,19 +193,17 @@ async function showGameMenu(channel) {
     
     const occupied = Object.keys(players).map(Number).sort((a, b) => a - b);
     
-    // Создаем красивое сообщение с ЛОГОТИПОМ
     const embed = new EmbedBuilder()
         .setTitle('🎮 БИТВА СЕМЕЙ 🎮')
         .setColor(0xFF5500)
-        .setThumbnail(LOGO_URL)  // <--- ТВОЙ ЛОГОТИП ТУТ
+        .setThumbnail(LOGO_URL)
         .setDescription(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n🏆 **ВЕТКА: #${channel.name}**\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`)
         .addFields(
             { name: '📊 ЗАНЯТЫЕ ПОЗИЦИИ', value: occupied.length ? occupied.map(p => `**${p}.** <@${players[p]}>`).join('\n') : '⚪ Пока никого нет', inline: false },
-            { name: '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', value: `📊 **Занято:** ${filled} / ${maxPos}\n💡 **Нажми на кнопку с числом** чтобы занять позицию`, inline: false }
+            { name: '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', value: `📊 **Занято:** ${filled} / ${maxPos}\n💡 **Нажми на кнопку с числом** чтобы занять позицию\n🔔 `/pingall` - позвать всех`, inline: false }
         )
         .setFooter({ text: 'Битва Семей | Нажми на число' });
     
-    // Создаем кнопки (по 5 в ряд)
     const rows = [];
     let currentRow = new ActionRowBuilder();
     let count = 0;
@@ -204,7 +227,6 @@ async function showGameMenu(channel) {
     
     if (count > 0) rows.push(currentRow);
     
-    // Удаляем старое сообщение
     const messages = await channel.messages.fetch({ limit: 10 });
     const botMessages = messages.filter(m => m.author.id === channel.client.user.id);
     for (const botMessage of botMessages.values()) {
@@ -213,7 +235,6 @@ async function showGameMenu(channel) {
         }
     }
     
-    // Отправляем новое меню с логотипом
     await channel.send({ embeds: [embed], components: rows });
 }
 
