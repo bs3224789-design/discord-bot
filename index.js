@@ -8,13 +8,9 @@ const client = new Client({
     ]
 });
 
-// Хранилище игр
 const games = new Map();
-
-// ЛОГОТИП
 const LOGO_URL = 'https://i.imgur.com/hjG5K0T.png';
 
-// Команды
 const commands = [
     {
         name: 'game',
@@ -78,7 +74,6 @@ client.once('ready', async () => {
     }
 });
 
-// Обработка команд
 client.on('interactionCreate', async (interaction) => {
     if (interaction.isCommand()) {
         const channelId = interaction.channel.id;
@@ -135,29 +130,33 @@ client.on('interactionCreate', async (interaction) => {
             return;
         }
         
-        // НОВАЯ КОМАНДА: /pingall
+        // /pingall - исправлен (быстрый ответ)
         if (interaction.commandName === 'pingall') {
             const game = games.get(channelId);
+            
+            // Сначала отвечаем (быстро, чтобы не было ошибки)
+            await interaction.reply({ content: '📢 Оповещение отправляется...', ephemeral: true });
+            
             if (!game) {
-                await interaction.reply({ content: '❌ Нет активной игры. Создай /game', ephemeral: true });
+                await interaction.followUp({ content: '❌ Нет активной игры. Создай /game', ephemeral: true });
                 return;
             }
             
             const filled = Object.keys(game.players).length;
             const maxPos = game.maxPosition;
             
-            // Тегаем @everyone
-            await interaction.channel.send(`@everyone\n🎮 **БИТВА СЕМЕЙ!** 🎮\n📊 Занято ${filled} из ${maxPos} позиций\n⚔️ Заходи занять место! /game ${maxPos}`);
+            // Отправляем @everyone
+            await interaction.channel.send(`@everyone\n🎮 **БИТВА СЕМЕЙ!** 🎮\n📊 Занято ${filled} из ${maxPos} позиций\n⚔️ Заходи занять место! Используй /game ${maxPos}`);
             
             // Показываем таблицу
             await showGameMenu(interaction.channel);
             
-            await interaction.reply({ content: '✅ Оповещение отправлено!', ephemeral: true });
+            await interaction.followUp({ content: '✅ Оповещение отправлено!', ephemeral: true });
             return;
         }
     }
     
-    // Обработка нажатий на кнопки
+    // Обработка кнопок
     if (interaction.isButton()) {
         const position = parseInt(interaction.customId);
         if (isNaN(position)) return;
@@ -184,13 +183,11 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
-// Меню с кнопками и логотипом
 async function showGameMenu(channel) {
     const game = games.get(channel.id) || { maxPosition: 10, players: {} };
     const players = game.players;
     const maxPos = game.maxPosition;
     const filled = Object.keys(players).length;
-    
     const occupied = Object.keys(players).map(Number).sort((a, b) => a - b);
     
     const embed = new EmbedBuilder()
