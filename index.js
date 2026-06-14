@@ -11,8 +11,12 @@ const client = new Client({
 // Хранилище игр
 const games = new Map();
 
-// ЛОГОТИП (твоя картинка)
+// --- ИЗМЕНЕНИЕ ТУТ ---
+// Ссылка на ваш АНИМИРОВАННЫЙ GIF
+const ANIMATED_GIF_URL = 'https://i.imgur.com/5Y7EpmD.gif';
+// Старый логотип (пока не удаляем, может пригодиться)
 const LOGO_URL = 'https://i.imgur.com/hjG5K0T.png';
+// ---------------------
 
 // Команды
 const commands = [
@@ -159,7 +163,7 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
-// Меню с кнопками и логотипом (БЕЗ прогресс-полосы)
+// --- ИЗМЕНЕНИЕ ТУТ: ДОБАВЛЕНА БОЛЬШАЯ КАРТИНКА С ГИФКОЙ ---
 async function showGameMenu(channel) {
     const game = games.get(channel.id) || { maxPosition: 10, players: {} };
     const players = game.players;
@@ -168,15 +172,16 @@ async function showGameMenu(channel) {
     
     const occupied = Object.keys(players).map(Number).sort((a, b) => a - b);
     
-    // Создаем красивое сообщение с ЛОГОТИПОМ и БЕЛЫМ фоном
+    // Создаем Embed с БОЛЬШОЙ АНИМИРОВАННОЙ КАРТИНКОЙ (GIF)
     const embed = new EmbedBuilder()
         .setTitle('🎮 БИТВА СЕМЕЙ 🎮')
-        .setColor(0xFFFFFF)  // БЕЛЫЙ ЦВЕТ
-        .setThumbnail(LOGO_URL)
+        .setColor(0xFFFFFF) // Белый фон
+        .setImage(ANIMATED_GIF_URL) // <--- ВОТ ТУТ ВСТАВЛЕН ВАШ GIF (Он будет внизу Embed)
+        // .setThumbnail(LOGO_URL) // Миниатюру можно убрать, оставив только GIF
         .setDescription(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n🏆 **ВЕТКА: #${channel.name}**\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`)
         .addFields(
             { name: '📊 ЗАНЯТЫЕ ПОЗИЦИИ', value: occupied.length ? occupied.map(p => `**${p}.** <@${players[p]}>`).join('\n') : '⚪ Пока никого нет', inline: false },
-            { name: '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', value: `📊 **Занято:** ${filled} / ${maxPos}\n💡 **Нажми на кнопку с числом** чтобы занять позицию`, inline: false }
+            { name: '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', value: `📊 **Занято:** ${filled} / ${maxPos}\n💡 **Нажми на кнопку** чтобы занять позицию`, inline: false }
         )
         .setFooter({ text: 'Битва Семей | Нажми на число' });
     
@@ -213,8 +218,9 @@ async function showGameMenu(channel) {
         }
     }
     
-    // Отправляем новое меню
+    // Отправляем новое меню с вашим анимированным GIF
     await channel.send({ embeds: [embed], components: rows });
 }
+// -------------------------------------------------------
 
 client.login(process.env.DISCORD_TOKEN);
