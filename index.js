@@ -11,12 +11,8 @@ const client = new Client({
 // Хранилище игр
 const games = new Map();
 
-// --- ИЗМЕНЕНИЕ ТУТ ---
-// Ссылка на ваш АНИМИРОВАННЫЙ GIF
-const ANIMATED_GIF_URL = 'https://i.imgur.com/5Y7EpmD.gif';
-// Старый логотип (пока не удаляем, может пригодиться)
+// ЛОГОТИП (маленькая картинка справа)
 const LOGO_URL = 'https://i.imgur.com/hjG5K0T.png';
-// ---------------------
 
 // Команды
 const commands = [
@@ -163,7 +159,7 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
-// --- ИЗМЕНЕНИЕ ТУТ: ДОБАВЛЕНА БОЛЬШАЯ КАРТИНКА С ГИФКОЙ ---
+// Меню с кнопками и маленьким логотипом (БЕЗ большой гифки)
 async function showGameMenu(channel) {
     const game = games.get(channel.id) || { maxPosition: 10, players: {} };
     const players = game.players;
@@ -172,12 +168,11 @@ async function showGameMenu(channel) {
     
     const occupied = Object.keys(players).map(Number).sort((a, b) => a - b);
     
-    // Создаем Embed с БОЛЬШОЙ АНИМИРОВАННОЙ КАРТИНКОЙ (GIF)
+    // Создаем сообщение с МАЛЕНЬКИМ ЛОГОТИПОМ СПРАВА
     const embed = new EmbedBuilder()
         .setTitle('🎮 БИТВА СЕМЕЙ 🎮')
-        .setColor(0xFFFFFF) // Белый фон
-        .setImage(ANIMATED_GIF_URL) // <--- ВОТ ТУТ ВСТАВЛЕН ВАШ GIF (Он будет внизу Embed)
-        // .setThumbnail(LOGO_URL) // Миниатюру можно убрать, оставив только GIF
+        .setColor(0xFFFFFF)  // БЕЛЫЙ ЦВЕТ
+        .setThumbnail(LOGO_URL)  // МАЛЕНЬКАЯ КАРТИНКА СПРАВА
         .setDescription(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n🏆 **ВЕТКА: #${channel.name}**\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`)
         .addFields(
             { name: '📊 ЗАНЯТЫЕ ПОЗИЦИИ', value: occupied.length ? occupied.map(p => `**${p}.** <@${players[p]}>`).join('\n') : '⚪ Пока никого нет', inline: false },
@@ -218,9 +213,8 @@ async function showGameMenu(channel) {
         }
     }
     
-    // Отправляем новое меню с вашим анимированным GIF
+    // Отправляем новое меню
     await channel.send({ embeds: [embed], components: rows });
 }
-// -------------------------------------------------------
 
 client.login(process.env.DISCORD_TOKEN);
