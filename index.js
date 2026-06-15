@@ -14,6 +14,9 @@ const games = new Map();
 // ЛОГОТИП (маленькая картинка справа)
 const LOGO_URL = 'https://i.imgur.com/hjG5K0T.png';
 
+// МАЛЕНЬКИЙ АНИМИРОВАННЫЙ GIF (снизу)
+const SMALL_GIF_URL = 'https://i.imgur.com/5Y7EpmD.gif';
+
 // Команды
 const commands = [
     {
@@ -159,7 +162,7 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
-// Меню с кнопками и маленьким логотипом (БЕЗ большой гифки)
+// Меню с кнопками, логотипом справа и МАЛЕНЬКИМ GIF СНИЗУ
 async function showGameMenu(channel) {
     const game = games.get(channel.id) || { maxPosition: 10, players: {} };
     const players = game.players;
@@ -168,11 +171,12 @@ async function showGameMenu(channel) {
     
     const occupied = Object.keys(players).map(Number).sort((a, b) => a - b);
     
-    // Создаем сообщение с МАЛЕНЬКИМ ЛОГОТИПОМ СПРАВА
+    // Создаем Embed
     const embed = new EmbedBuilder()
         .setTitle('🎮 БИТВА СЕМЕЙ 🎮')
         .setColor(0xFFFFFF)  // БЕЛЫЙ ЦВЕТ
-        .setThumbnail(LOGO_URL)  // МАЛЕНЬКАЯ КАРТИНКА СПРАВА
+        .setThumbnail(LOGO_URL)  // МАЛЕНЬКИЙ ЛОГОТИП СПРАВА
+        .setImage(SMALL_GIF_URL)  // МАЛЕНЬКИЙ АНИМИРОВАННЫЙ GIF СНИЗУ
         .setDescription(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n🏆 **ВЕТКА: #${channel.name}**\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`)
         .addFields(
             { name: '📊 ЗАНЯТЫЕ ПОЗИЦИИ', value: occupied.length ? occupied.map(p => `**${p}.** <@${players[p]}>`).join('\n') : '⚪ Пока никого нет', inline: false },
@@ -213,7 +217,7 @@ async function showGameMenu(channel) {
         }
     }
     
-    // Отправляем новое меню
+    // Отправляем новое меню с анимированным GIF снизу
     await channel.send({ embeds: [embed], components: rows });
 }
 
