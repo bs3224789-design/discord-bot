@@ -70,126 +70,128 @@ client.once('ready', async () => {
         await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
         console.log('✅ Слеш-команды зарегистрированы!');
     } catch (error) {
-        console.error(error);
+        console.error('❌ Ошибка регистрации команд:', error);
     }
 });
 
 // Обработка команд
 client.on('interactionCreate', async (interaction) => {
-    if (interaction.isCommand()) {
-        const channelId = interaction.channel.id;
+    if (!interaction.isCommand()) return;
+    
+    const channelId = interaction.channel.id;
+    
+    if (interaction.commandName === 'game') {
+        const maxPos = interaction.options.getInteger('positions') || 10;
         
-        if (interaction.commandName === 'game') {
-            const maxPos = interaction.options.getInteger('positions') || 10;
+        try {
+            const threadName = `🎮 Игра на ${maxPos} мест`;
             
-            try {
-                const threadName = `🎮 Игра на ${maxPos} мест`;
-                
-                const existingThread = interaction.channel.threads.cache.find(
-                    t => t.name === threadName && !t.archived
-                );
-                
-                let targetThread = existingThread;
-                
-                if (!existingThread) {
-                    targetThread = await interaction.channel.threads.create({
-                        name: threadName,
-                        autoArchiveDuration: 60,
-                        type: ChannelType.PublicThread,
-                        reason: 'Новая игра Битва Семей'
-                    });
-                    
-                    await targetThread.send(`🎮 **Добро пожаловать в игру!**\n📊 **${maxPos}** позиций доступно.\n💡 Нажимай на кнопки чтобы занять место!`);
-                }
-                
-                games.set(targetThread.id, { maxPosition: maxPos, players: {} });
-                await showGameMenu(targetThread);
-                
-                await interaction.reply({ 
-                    content: `✅ Создана ветка **${threadName}**! Переходи туда чтобы играть.`,
-                    ephemeral: true 
+            const existingThread = interaction.channel.threads.cache.find(
+                t => t.name === threadName && !t.archived
+            );
+            
+            let targetThread = existingThread;
+            
+            if (!existingThread) {
+                targetThread = await interaction.channel.threads.create({
+                    name: threadName,
+                    autoArchiveDuration: 60,
+                    type: ChannelType.PublicThread,
+                    reason: 'Новая игра Битва Семей'
                 });
                 
-            } catch (error) {
-                console.error(error);
-                await interaction.reply({ 
-                    content: '❌ Не удалось создать ветку. Проверь права бота.',
-                    ephemeral: true 
-                });
+                await targetThread.send(`🎮 **Добро пожаловать в игру!**\n📊 **${maxPos}** позиций доступно.\n💡 Нажимай на кнопки чтобы занять место!`);
             }
-            return;
+            
+            games.set(targetThread.id, { maxPosition: maxPos, players: {} });
+            await showGameMenu(targetThread);
+            
+            await interaction.reply({ 
+                content: `✅ Создана ветка **${threadName}**! Переходи туда чтобы играть.`,
+                ephemeral: true 
+            });
+            
+        } catch (error) {
+            console.error(error);
+            await interaction.reply({ 
+                content: '❌ Не удалось создать ветку. Проверь права бота.',
+                ephemeral: true 
+            });
         }
-        
-        if (interaction.commandName === 'add') {
-            let game = games.get(channelId);
-            if (!game) game = { maxPosition: 10, players: {} };
-            const newMax = interaction.options.getInteger('positions');
-            if (newMax > game.maxPosition) {
-                game.maxPosition = newMax;
-                games.set(channelId, game);
-                await showGameMenu(interaction.channel);
-                await interaction.reply({ content: `✅ Расширено до ${newMax} позиций!`, ephemeral: true });
-            } else {
-                await interaction.reply({ content: `❌ Число должно быть больше ${game.maxPosition}`, ephemeral: true });
-            }
-            return;
-        }
-        
-        if (interaction.commandName === 'clear') {
-            const game = games.get(channelId);
-            if (game) game.players = {};
-            await showGameMenu(interaction.channel);
-            await interaction.reply({ content: '🧹 Все очищено!', ephemeral: true });
-            return;
-        }
-        
-        if (interaction.commandName === 'show') {
-            await showGameMenu(interaction.channel);
-            await interaction.reply({ content: '📊 Обновлено', ephemeral: true });
-            return;
-        }
-        
-        if (interaction.commandName === 'remove') {
-            const game = games.get(channelId);
-            if (game) {
-                const pos = interaction.options.getInteger('position');
-                if (game.players[pos]) {
-                    delete game.players[pos];
-                    await showGameMenu(interaction.channel);
-                    await interaction.reply({ content: `✅ Позиция ${pos} свободна`, ephemeral: true });
-                } else {
-                    await interaction.reply({ content: `❌ Позиция ${pos} уже свободна`, ephemeral: true });
-                }
-            }
-            return;
-        }
+        return;
     }
     
-    // Обработка нажатий на кнопки
-    if (interaction.isButton()) {
-        const position = parseInt(interaction.customId);
-        if (isNaN(position)) return;
-        
-        const game = games.get(interaction.channel.id);
-        if (!game) {
-            await interaction.reply({ content: '❌ Нет активной игры. Создай /game', ephemeral: true });
-            return;
+    if (interaction.commandName === 'add') {
+        let game = games.get(channelId);
+        if (!game) game = { maxPosition: 10, players: {} };
+        const newMax = interaction.options.getInteger('positions');
+        if (newMax > game.maxPosition) {
+            game.maxPosition = newMax;
+            games.set(channelId, game);
+            await showGameMenu(interaction.channel);
+            await interaction.reply({ content: `✅ Расширено до ${newMax} позиций!`, ephemeral: true });
+        } else {
+            await interaction.reply({ content: `❌ Число должно быть больше ${game.maxPosition}`, ephemeral: true });
         }
-        
-        if (position > game.maxPosition) {
-            await interaction.reply({ content: `❌ Максимум ${game.maxPosition}. Используй /add`, ephemeral: true });
-            return;
-        }
-        
-        if (game.players[position]) {
-            await interaction.reply({ content: `❌ Позиция ${position} занята <@${game.players[position]}>`, ephemeral: true });
-            return;
-        }
-        
-        game.players[position] = interaction.user.id;
-        await showGameMenu(interaction.channel);
-        await interaction.reply({ content: `✅ Ты занял позицию ${position}!`, ephemeral: true });
+        return;
     }
+    
+    if (interaction.commandName === 'clear') {
+        const game = games.get(channelId);
+        if (game) game.players = {};
+        await showGameMenu(interaction.channel);
+        await interaction.reply({ content: '🧹 Все очищено!', ephemeral: true });
+        return;
+    }
+    
+    if (interaction.commandName === 'show') {
+        await showGameMenu(interaction.channel);
+        await interaction.reply({ content: '📊 Обновлено', ephemeral: true });
+        return;
+    }
+    
+    if (interaction.commandName === 'remove') {
+        const game = games.get(channelId);
+        if (game) {
+            const pos = interaction.options.getInteger('position');
+            if (game.players[pos]) {
+                delete game.players[pos];
+                await showGameMenu(interaction.channel);
+                await interaction.reply({ content: `✅ Позиция ${pos} свободна`, ephemeral: true });
+            } else {
+                await interaction.reply({ content: `❌ Позиция ${pos} уже свободна`, ephemeral: true });
+            }
+        }
+        return;
+    }
+});
+
+// Обработка нажатий на кнопки
+client.on('interactionCreate', async (interaction) => {
+    if (!interaction.isButton()) return;
+    
+    const position = parseInt(interaction.customId);
+    if (isNaN(position)) return;
+    
+    const game = games.get(interaction.channel.id);
+    if (!game) {
+        await interaction.reply({ content: '❌ Нет активной игры. Создай /game', ephemeral: true });
+        return;
+    }
+    
+    if (position > game.maxPosition) {
+        await interaction.reply({ content: `❌ Максимум ${game.maxPosition}. Используй /add`, ephemeral: true });
+        return;
+    }
+    
+    if (game.players[position]) {
+        await interaction.reply({ content: `❌ Позиция ${position} занята <@${game.players[position]}>`, ephemeral: true });
+        return;
+    }
+    
+    game.players[position] = interaction.user.id;
+    await showGameMenu(interaction.channel);
+    await interaction.reply({ content: `✅ Ты занял позицию ${position}!`, ephemeral: true });
 });
 
 // Меню с кнопками и GIF снизу (БЕЗ ЛОГОТИПА СПРАВА)
@@ -204,8 +206,7 @@ async function showGameMenu(channel) {
     const embed = new EmbedBuilder()
         .setTitle('🎮 БИТВА СЕМЕЙ 🎮')
         .setColor(0xFFFFFF)
-        // .setThumbnail(LOGO_URL)  // <--- УБРАНО!
-        .setImage(SMALL_GIF_URL)  // ТОЛЬКО GIF СНИЗУ
+        .setImage(SMALL_GIF_URL)
         .setDescription(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n🏆 **ВЕТКА: #${channel.name}**\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`)
         .addFields(
             { name: '📊 ЗАНЯТЫЕ ПОЗИЦИИ', value: occupied.length ? occupied.map(p => `**${p}.** <@${players[p]}>`).join('\n') : '⚪ Пока никого нет', inline: false },
