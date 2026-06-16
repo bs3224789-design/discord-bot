@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, REST, Routes, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, REST, Routes, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, ChannelType } = require('discord.js');
 
 const client = new Client({
     intents: [
@@ -14,26 +14,26 @@ const games = new Map();
 // ЛОГОТИП (маленькая картинка справа)
 const LOGO_URL = 'https://i.imgur.com/hjG5K0T.png';
 
-// МАЛЕНЬКИЙ АНИМИРОВАННЫЙ GIF (снизу)
+// АНИМИРОВАННЫЙ GIF (снизу)
 const SMALL_GIF_URL = 'https://i.imgur.com/5Y7EpmD.gif';
 
 // Команды
 const commands = [
     {
         name: 'game',
-        description: 'Создать новую игру',
+        description: 'Создать новую игру в новой ветке',
         options: [
             {
                 name: 'positions',
-                description: 'Количество позиций (например 20)',
+                description: 'Количество позиций (например 5)',
                 type: 4,
-                required: false
+                required: true
             }
         ]
     },
     {
         name: 'add',
-        description: 'Добавить позиции',
+        description: 'Добавить позиции в текущую игру',
         options: [
             {
                 name: 'positions',
@@ -45,7 +45,7 @@ const commands = [
     },
     {
         name: 'clear',
-        description: 'Очистить все позиции'
+        description: 'Очистить все позиции в этой ветке'
     },
     {
         name: 'show',
@@ -82,14 +82,56 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.isCommand()) {
         const channelId = interaction.channel.id;
         
+        // /game - СОЗДАЕТ НОВУЮ ВЕТКУ
         if (interaction.commandName === 'game') {
-            let maxPos = interaction.options.getInteger('positions') || 10;
-            games.set(channelId, { maxPosition: maxPos, players: {} });
-            await showGameMenu(interaction.channel);
-            await interaction.reply({ content: `🎮 Игра на ${maxPos} мест создана!`, ephemeral: true });
+            const maxPos = interaction.options.getInteger('positions') || 10;
+            
+            // Создаем новую ветку (канал)
+            try {
+                const channelName = `game-${maxPos}`;
+                
+                // Проверяем, есть ли уже такой канал
+                const existingChannel = interaction.guild.channels.cache.find(
+                    ch => ch.name === channelName && ch.type === ChannelType.GuildText
+                );
+                
+                let targetChannel = existingChannel;
+                
+                if (!existingChannel) {
+                    // Создаем новый канал
+                    targetChannel = await interaction.guild.channels.create({
+                        name: channelName,
+                        type: ChannelType.GuildText,
+                        parent: interaction.channel.parent, // та же категория, где была вызвана команда
+                        permissionOverwrites: [
+                            {
+                                id: interaction.guild.id,
+                                allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory']
+                            }
+                        ]
+                    });
+                }
+                
+                // Создаем игру в этом канале
+                games.set(targetChannel.id, { maxPosition: maxPos, players: {} });
+                await showGameMenu(targetChannel);
+                
+                await interaction.reply({ 
+                    content: `✅ Создана новая ветка **#${channelName}** с игрой на **${maxPos}** позиций!`,
+                    ephemeral: true 
+                });
+                
+            } catch (error) {
+                console.error(error);
+                await interaction.reply({ 
+                    content: '❌ Не удалось создать ветку. Проверь права бота (нужны права на управление каналами).',
+                    ephemeral: true 
+                });
+            }
             return;
         }
         
+        // Остальные команды работают в текущем канале
         if (interaction.commandName === 'add') {
             let game = games.get(channelId);
             if (!game) game = { maxPosition: 10, players: {} };
@@ -162,7 +204,7 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
-// Меню с кнопками, логотипом справа и МАЛЕНЬКИМ GIF СНИЗУ
+// Меню с кнопками, логотипом справа и GIF снизу
 async function showGameMenu(channel) {
     const game = games.get(channel.id) || { maxPosition: 10, players: {} };
     const players = game.players;
@@ -171,12 +213,11 @@ async function showGameMenu(channel) {
     
     const occupied = Object.keys(players).map(Number).sort((a, b) => a - b);
     
-    // Создаем Embed
     const embed = new EmbedBuilder()
         .setTitle('🎮 БИТВА СЕМЕЙ 🎮')
-        .setColor(0xFFFFFF)  // БЕЛЫЙ ЦВЕТ
-        .setThumbnail(LOGO_URL)  // МАЛЕНЬКИЙ ЛОГОТИП СПРАВА
-        .setImage(SMALL_GIF_URL)  // МАЛЕНЬКИЙ АНИМИРОВАННЫЙ GIF СНИЗУ
+        .setColor(0xFFFFFF)
+        .setThumbnail(LOGO_URL)
+        .setImage(SMALL_GIF_URL)
         .setDescription(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n🏆 **ВЕТКА: #${channel.name}**\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`)
         .addFields(
             { name: '📊 ЗАНЯТЫЕ ПОЗИЦИИ', value: occupied.length ? occupied.map(p => `**${p}.** <@${players[p]}>`).join('\n') : '⚪ Пока никого нет', inline: false },
@@ -184,7 +225,6 @@ async function showGameMenu(channel) {
         )
         .setFooter({ text: 'Битва Семей | Нажми на число' });
     
-    // Создаем кнопки (по 5 в ряд)
     const rows = [];
     let currentRow = new ActionRowBuilder();
     let count = 0;
@@ -217,7 +257,6 @@ async function showGameMenu(channel) {
         }
     }
     
-    // Отправляем новое меню с анимированным GIF снизу
     await channel.send({ embeds: [embed], components: rows });
 }
 
