@@ -11,17 +11,15 @@ const client = new Client({
 // Хранилище игр
 const games = new Map();
 
-// ЛОГОТИП (маленькая картинка справа)
+// ЛОГОТИП
 const LOGO_URL = 'https://i.imgur.com/hjG5K0T.png';
-
-// АНИМИРОВАННЫЙ GIF (снизу)
 const SMALL_GIF_URL = 'https://i.imgur.com/5Y7EpmD.gif';
 
 // Команды
 const commands = [
     {
         name: 'game',
-        description: 'Создать новую игру в новой ветке',
+        description: 'Создать новую игру в ветке',
         options: [
             {
                 name: 'positions',
@@ -33,7 +31,7 @@ const commands = [
     },
     {
         name: 'add',
-        description: 'Добавить позиции в текущую игру',
+        description: 'Добавить позиции',
         options: [
             {
                 name: 'positions',
@@ -45,7 +43,7 @@ const commands = [
     },
     {
         name: 'clear',
-        description: 'Очистить все позиции в этой ветке'
+        description: 'Очистить все позиции'
     },
     {
         name: 'show',
@@ -82,56 +80,54 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.isCommand()) {
         const channelId = interaction.channel.id;
         
-        // /game - СОЗДАЕТ НОВУЮ ВЕТКУ
+        // /game - СОЗДАЕТ ВЕТКУ в текущем канале
         if (interaction.commandName === 'game') {
             const maxPos = interaction.options.getInteger('positions') || 10;
             
-            // Создаем новую ветку (канал)
             try {
-                const channelName = `game-${maxPos}`;
+                // Создаем ветку (thread) в текущем канале
+                const threadName = `🎮 Игра на ${maxPos} мест`;
                 
-                // Проверяем, есть ли уже такой канал
-                const existingChannel = interaction.guild.channels.cache.find(
-                    ch => ch.name === channelName && ch.type === ChannelType.GuildText
+                // Проверяем, есть ли уже такая ветка
+                const existingThread = interaction.channel.threads.cache.find(
+                    t => t.name === threadName && !t.archived
                 );
                 
-                let targetChannel = existingChannel;
+                let targetThread = existingThread;
                 
-                if (!existingChannel) {
-                    // Создаем новый канал
-                    targetChannel = await interaction.guild.channels.create({
-                        name: channelName,
-                        type: ChannelType.GuildText,
-                        parent: interaction.channel.parent, // та же категория, где была вызвана команда
-                        permissionOverwrites: [
-                            {
-                                id: interaction.guild.id,
-                                allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory']
-                            }
-                        ]
+                if (!existingThread) {
+                    // Создаем новую ветку
+                    targetThread = await interaction.channel.threads.create({
+                        name: threadName,
+                        autoArchiveDuration: 60, // Архивация через 60 минут бездействия
+                        type: ChannelType.PublicThread,
+                        reason: 'Новая игра Битва Семей'
                     });
+                    
+                    // Отправляем приветственное сообщение в ветку
+                    await targetThread.send(`🎮 **Добро пожаловать в игру!**\n📊 **${maxPos}** позиций доступно.\n💡 Нажимай на кнопки чтобы занять место!`);
                 }
                 
-                // Создаем игру в этом канале
-                games.set(targetChannel.id, { maxPosition: maxPos, players: {} });
-                await showGameMenu(targetChannel);
+                // Создаем игру в этой ветке
+                games.set(targetThread.id, { maxPosition: maxPos, players: {} });
+                await showGameMenu(targetThread);
                 
                 await interaction.reply({ 
-                    content: `✅ Создана новая ветка **#${channelName}** с игрой на **${maxPos}** позиций!`,
+                    content: `✅ Создана ветка **${threadName}**! Переходи туда чтобы играть.`,
                     ephemeral: true 
                 });
                 
             } catch (error) {
                 console.error(error);
                 await interaction.reply({ 
-                    content: '❌ Не удалось создать ветку. Проверь права бота (нужны права на управление каналами).',
+                    content: '❌ Не удалось создать ветку. Проверь права бота (нужны права на создание веток).',
                     ephemeral: true 
                 });
             }
             return;
         }
         
-        // Остальные команды работают в текущем канале
+        // Остальные команды работают в текущем канале/ветке
         if (interaction.commandName === 'add') {
             let game = games.get(channelId);
             if (!game) game = { maxPosition: 10, players: {} };
@@ -204,7 +200,7 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
-// Меню с кнопками, логотипом справа и GIF снизу
+// Меню с кнопками
 async function showGameMenu(channel) {
     const game = games.get(channel.id) || { maxPosition: 10, players: {} };
     const players = game.players;
