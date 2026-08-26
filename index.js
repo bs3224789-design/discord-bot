@@ -238,7 +238,7 @@ async function createPrivateGameChannel({ guild, parentChannel, organizerUser, c
     const mentions = [...collectedUsers.values()].map((u) => `<@${u.id}>`).join(', ');
     await privateChannel
         .send(
-            `👋 Приватный канал только для тех, кто поставил реакцию на [это сообщение](${originalMessage.url}) (+ хай-ранги).\n👥 Поставили реакцию: ${mentions}`
+            `👋 Приватный канал только для тех, кто поставил реакцию на [это сообщение](${originalMessage.url}).\n👥 Поставили реакцию: ${mentions}`
         )
         .catch(() => {});
 
