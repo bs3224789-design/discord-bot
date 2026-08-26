@@ -15,7 +15,8 @@ const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildMembers
     ]
 });
 
@@ -125,6 +126,19 @@ function hasHighRank(member) {
         return HIGH_RANK_ROLE_IDS.some((id) => roles.includes(id));
     }
     return false;
+}
+
+// Возвращает Collection<id, GuildMember> всех участников сервера с
+// хотя бы одной хай-ранг ролью. Требует GuildMembers intent (включён
+// выше и должен быть включён в Developer Portal → Бот → Server Members
+// Intent) — иначе список ролей будет неполным.
+async function getHighRankMembers(guild) {
+    try {
+        await guild.members.fetch();
+    } catch (err) {
+        console.error('⚠️ Не удалось загрузить полный список участников сервера:', err);
+    }
+    return guild.members.cache.filter((m) => !m.user.bot && hasHighRank(m));
 }
 
 async function replySafe(interaction, payload) {
@@ -529,9 +543,10 @@ client.on('messageCreate', async (message) => {
             return;
         }
 
-        if (!message.guild.members.me?.permissions.has(PermissionFlagsBits.ManageThreads)) {
+        const botPerms = channel.permissionsFor(client.user);
+        if (!botPerms || !botPerms.has(PermissionFlagsBits.ManageThreads)) {
             await message
-                .reply({ content: '❌ У бота нет права Manage Threads — не могу создать приватную ветку.' })
+                .reply({ content: '❌ У бота нет права Manage Threads в этом канале — не могу создать приватную ветку.' })
                 .catch(() => {});
             return;
         }
@@ -597,20 +612,45 @@ client.on('messageCreate', async (message) => {
             });
         }
 
-        // Добавляем в ветку автора и всех, кто поставил реакцию
-        // (для приватного канала-фоллбэка это не нужно — доступ уже
-        // выдан через permissionOverwrites выше).
+        // Кого добавляем в ветку: автор + все, кто поставил реакцию +
+        // все хай-ранги (чтобы модерация всегда имела доступ, даже если
+        // сами реакцию не ставили). Никто другой войти не сможет —
+        // приватная ветка не показывается никому, кроме её участников
+        // (и тех, у кого есть право Manage Threads на сервере).
+        const highRankMembers = await getHighRankMembers(message.guild);
+
+        const idsToAdd = new Map();
+        idsToAdd.set(message.author.id, message.author.tag);
+        for (const [id, u] of collectedUsers) idsToAdd.set(id, u.tag);
+        for (const [id, m] of highRankMembers) idsToAdd.set(id, m.user.tag);
+
+        const added = [];
+        const failed = [];
+
         if (targetThread.isThread()) {
-            try {
-                await targetThread.members.add(message.author.id);
-            } catch (err) {
-                console.error('⚠️ Не удалось добавить автора в ветку:', err);
-            }
-            for (const userId of collectedUsers.keys()) {
+            for (const [userId, tag] of idsToAdd) {
                 try {
                     await targetThread.members.add(userId);
+                    added.push(tag);
                 } catch (err) {
-                    console.error(`⚠️ Не удалось добавить пользователя ${userId} в ветку:`, err);
+                    failed.push(tag);
+                    console.error(`⚠️ Не удалось добавить пользователя ${tag} (${userId}) в ветку:`, err);
+                }
+            }
+        } else {
+            // Фоллбэк-канал: доступ уже выдан через permissionOverwrites,
+            // но хай-рангам его туда не давали — добавим отдельно.
+            for (const [id] of highRankMembers) {
+                try {
+                    await targetThread.permissionOverwrites.edit(id, {
+                        ViewChannel: true,
+                        SendMessages: true,
+                        ReadMessageHistory: true
+                    });
+                    added.push(idsToAdd.get(id));
+                } catch (err) {
+                    failed.push(idsToAdd.get(id));
+                    console.error(`⚠️ Не удалось дать доступ хай-рангу ${id} в канале-фоллбэке:`, err);
                 }
             }
         }
@@ -620,13 +660,18 @@ client.on('messageCreate', async (message) => {
         const mentions = [...collectedUsers.values()].map((u) => `<@${u.id}>`).join(', ');
         await targetThread
             .send(
-                `👋 ${message.author}, это приватная ветка только для тех, кто поставил реакцию на твоё сообщение.\n👥 Участники: ${mentions}`
+                `👋 ${message.author}, это приватная ветка только для тех, кто поставил реакцию на твоё сообщение (+ хай-ранги).\n👥 Поставили реакцию: ${mentions}`
             )
             .catch(() => {});
 
         await showGameMenu(targetThread);
 
-        await message.reply({ content: `✅ Создана приватная ветка: ${targetThread}` }).catch(() => {});
+        let resultText = `✅ Создана приватная ветка: ${targetThread}\n➕ Добавлено: ${added.length}/${idsToAdd.size}`;
+        if (failed.length > 0) {
+            resultText += `\n⚠️ Не удалось добавить: ${failed.join(', ')} (смотри логи бота — скорее всего не хватает прав или это баг discord.js, кидай мне текст ошибки из консоли)`;
+        }
+
+        await message.reply({ content: resultText }).catch(() => {});
     } catch (error) {
         console.error('❌ Ошибка создания приватной ветки по реакциям:', error);
     }
