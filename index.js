@@ -494,16 +494,17 @@ async function showGameMenu(channel) {
 }
 
 // ===================================================================
-// Авто-создание приватной ВЕТКИ по реакциям + игра внутри неё
+// Авто-создание приватного КАНАЛА по реакциям + игра внутри него
 //
 // Как это работает: пользователь пишет сообщение, люди ставят на него
 // реакции (любой эмодзи). Когда автор исходного сообщения отвечает на
 // него обычным Reply в Discord, бот собирает всех, кто поставил
-// реакцию, и создаёт ПРИВАТНУЮ ВЕТКУ, которую видят только они
-// (+ автор). Внутри сразу разворачивается игра с кнопками-позициями —
-// по числу людей, поставивших реакцию. Если отвечает не автор
-// исходного сообщения — ничего не происходит (защита от случайных
-// срабатываний на чужих сообщениях).
+// реакцию, и создаёт ПРИВАТНЫЙ КАНАЛ (права доступа через
+// permissionOverwrites — надёжнее, чем добавление участников в ветку),
+// который видят только они (+ автор + хай-ранги). Внутри сразу
+// разворачивается игра с кнопками-позициями — по числу людей,
+// поставивших реакцию. Если отвечает не автор исходного сообщения —
+// ничего не происходит (защита от случайных срабатываний).
 // ===================================================================
 client.on('messageCreate', async (message) => {
     try {
@@ -544,136 +545,79 @@ client.on('messageCreate', async (message) => {
         }
 
         const botPerms = channel.permissionsFor(client.user);
-        if (!botPerms || !botPerms.has(PermissionFlagsBits.ManageThreads)) {
+        if (!botPerms || !botPerms.has(PermissionFlagsBits.ManageChannels) || !botPerms.has(PermissionFlagsBits.ManageRoles)) {
             await message
-                .reply({ content: '❌ У бота нет права Manage Threads в этом канале — не могу создать приватную ветку.' })
+                .reply({ content: '❌ У бота нет прав Manage Channels / Manage Roles в этом канале — не могу создать приватный канал.' })
                 .catch(() => {});
             return;
         }
 
         const maxPos = Math.min(collectedUsers.size, MAX_BUTTONS);
-        const safeAuthorName = message.author.username.slice(0, 40);
-        const threadName = `🔒 Игра на ${maxPos} мест (${safeAuthorName})`;
 
-        let targetThread;
-        try {
-            targetThread = await channel.threads.create({
-                name: threadName,
-                type: ChannelType.PrivateThread,
-                autoArchiveDuration: 60,
-                invitable: false,
-                reason: `Приватная ветка по реакциям на сообщение ${original.id} (${message.author.tag})`
-            });
-        } catch (err) {
-            console.error('⚠️ Не удалось создать приватную ветку, пробую приватный канал как фоллбэк:', err);
-
-            // Фоллбэк: если приватные ветки недоступны на этом сервере —
-            // создаём обычный приватный канал с ручными правами доступа.
-            let parentCategoryId = null;
-            try {
-                parentCategoryId = channel.parentId ?? null;
-            } catch {
-                parentCategoryId = null;
-            }
-
-            const safeChannelName = message.author.username
-                .toLowerCase()
-                .replace(/[^a-z0-9-]/g, '-')
-                .replace(/-+/g, '-')
-                .slice(0, 60);
-
-            const permissionOverwrites = [
-                { id: message.guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
-                {
-                    id: client.user.id,
-                    allow: [
-                        PermissionFlagsBits.ViewChannel,
-                        PermissionFlagsBits.SendMessages,
-                        PermissionFlagsBits.ManageChannels,
-                        PermissionFlagsBits.ManageRoles
-                    ]
-                },
-                {
-                    id: message.author.id,
-                    allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
-                },
-                ...[...collectedUsers.values()].map((u) => ({
-                    id: u.id,
-                    allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
-                }))
-            ];
-
-            targetThread = await message.guild.channels.create({
-                name: `secret-${safeChannelName || 'chat'}-${Date.now().toString(36).slice(-4)}`,
-                type: ChannelType.GuildText,
-                parent: parentCategoryId || undefined,
-                permissionOverwrites,
-                reason: `Приватный канал (фоллбэк) по реакциям на сообщение ${original.id}`
-            });
-        }
-
-        // Кого добавляем в ветку: автор + все, кто поставил реакцию +
-        // все хай-ранги (чтобы модерация всегда имела доступ, даже если
-        // сами реакцию не ставили). Никто другой войти не сможет —
-        // приватная ветка не показывается никому, кроме её участников
-        // (и тех, у кого есть право Manage Threads на сервере).
+        // Хай-ранги получают доступ автоматически, даже если сами
+        // реакцию не ставили — чтобы модерация всегда видела канал.
+        // Больше никто, кроме них и реагировавших, войти не сможет —
+        // у @everyone доступ явно запрещён (deny ViewChannel).
         const highRankMembers = await getHighRankMembers(message.guild);
 
-        const idsToAdd = new Map();
-        idsToAdd.set(message.author.id, message.author.tag);
-        for (const [id, u] of collectedUsers) idsToAdd.set(id, u.tag);
-        for (const [id, m] of highRankMembers) idsToAdd.set(id, m.user.tag);
+        const membersToGrant = new Map();
+        membersToGrant.set(message.author.id, message.author.tag);
+        for (const [id, u] of collectedUsers) membersToGrant.set(id, u.tag);
+        for (const [id, m] of highRankMembers) membersToGrant.set(id, m.user.tag);
 
-        const added = [];
-        const failed = [];
-
-        if (targetThread.isThread()) {
-            for (const [userId, tag] of idsToAdd) {
-                try {
-                    await targetThread.members.add(userId);
-                    added.push(tag);
-                } catch (err) {
-                    failed.push(tag);
-                    console.error(`⚠️ Не удалось добавить пользователя ${tag} (${userId}) в ветку:`, err);
-                }
-            }
-        } else {
-            // Фоллбэк-канал: доступ уже выдан через permissionOverwrites,
-            // но хай-рангам его туда не давали — добавим отдельно.
-            for (const [id] of highRankMembers) {
-                try {
-                    await targetThread.permissionOverwrites.edit(id, {
-                        ViewChannel: true,
-                        SendMessages: true,
-                        ReadMessageHistory: true
-                    });
-                    added.push(idsToAdd.get(id));
-                } catch (err) {
-                    failed.push(idsToAdd.get(id));
-                    console.error(`⚠️ Не удалось дать доступ хай-рангу ${id} в канале-фоллбэке:`, err);
-                }
-            }
+        let parentCategoryId = null;
+        try {
+            parentCategoryId = channel.parentId ?? null;
+        } catch {
+            parentCategoryId = null;
         }
 
-        games.set(targetThread.id, { maxPosition: maxPos, players: {} });
+        const safeChannelName = message.author.username
+            .toLowerCase()
+            .replace(/[^a-z0-9-]/g, '-')
+            .replace(/-+/g, '-')
+            .slice(0, 60);
+
+        const permissionOverwrites = [
+            { id: message.guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+            {
+                id: client.user.id,
+                allow: [
+                    PermissionFlagsBits.ViewChannel,
+                    PermissionFlagsBits.SendMessages,
+                    PermissionFlagsBits.ManageChannels,
+                    PermissionFlagsBits.ManageRoles,
+                    PermissionFlagsBits.ReadMessageHistory
+                ]
+            },
+            ...[...membersToGrant.keys()].map((id) => ({
+                id,
+                allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
+            }))
+        ];
+
+        const privateChannel = await message.guild.channels.create({
+            name: `secret-${safeChannelName || 'chat'}-${Date.now().toString(36).slice(-4)}`,
+            type: ChannelType.GuildText,
+            parent: parentCategoryId || undefined,
+            permissionOverwrites,
+            reason: `Приватный канал по реакциям на сообщение ${original.id} (${message.author.tag})`
+        });
+
+        games.set(privateChannel.id, { maxPosition: maxPos, players: {} });
 
         const mentions = [...collectedUsers.values()].map((u) => `<@${u.id}>`).join(', ');
-        await targetThread
+        await privateChannel
             .send(
-                `👋 ${message.author}, это приватная ветка только для тех, кто поставил реакцию на твоё сообщение (+ хай-ранги).\n👥 Поставили реакцию: ${mentions}`
+                `👋 ${message.author}, это приватный канал только для тех, кто поставил реакцию на твоё сообщение (+ хай-ранги).\n👥 Поставили реакцию: ${mentions}`
             )
             .catch(() => {});
 
-        await showGameMenu(targetThread);
+        await showGameMenu(privateChannel);
 
-        let resultText = `✅ Создана приватная ветка: ${targetThread}\n➕ Добавлено: ${added.length}/${idsToAdd.size}`;
-        if (failed.length > 0) {
-            resultText += `\n⚠️ Не удалось добавить: ${failed.join(', ')} (смотри логи бота — скорее всего не хватает прав или это баг discord.js, кидай мне текст ошибки из консоли)`;
-        }
-
-        await message.reply({ content: resultText }).catch(() => {});
+        await message.reply({ content: `✅ Создан приватный канал: ${privateChannel}` }).catch(() => {});
     } catch (error) {
-        console.error('❌ Ошибка создания приватной ветки по реакциям:', error);
+        console.error('❌ Ошибка создания приватного канала по реакциям:', error);
     }
 });
 
