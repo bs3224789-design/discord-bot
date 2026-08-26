@@ -49,13 +49,13 @@ process.on('uncaughtException', (err) => {
 const commands = [
     {
         name: 'game',
-        description: 'Создать новую игру в ветке',
+        description: 'Создать новую игру в ветке (без positions — посчитает по реакциям на сообщении)',
         options: [
             {
                 name: 'positions',
-                description: 'Количество позиций (максимум 25)',
+                description: 'Количество позиций (необязательно, максимум 25)',
                 type: 4,
-                required: true
+                required: false
             }
         ]
     },
@@ -157,16 +157,6 @@ client.on('interactionCreate', async (interaction) => {
         const channelId = interaction.channel?.id;
 
         if (interaction.commandName === 'game') {
-            let maxPos = interaction.options.getInteger('positions') || 10;
-
-            if (maxPos < 1) {
-                await interaction.reply({ content: '❌ Количество позиций должно быть больше 0.', ephemeral: true });
-                return;
-            }
-            if (maxPos > MAX_BUTTONS) {
-                maxPos = MAX_BUTTONS;
-            }
-
             if (!interaction.channel || interaction.channel.isThread()) {
                 await interaction.reply({
                     content: '❌ Создавать игру нужно в обычном канале, а не внутри ветки.',
@@ -178,15 +168,62 @@ client.on('interactionCreate', async (interaction) => {
             await interaction.deferReply({ ephemeral: true });
 
             try {
+                let maxPos = interaction.options.getInteger('positions');
+
+                // Если число позиций не указано — считаем по реакциям на
+                // САМОМ СВЕЖЕМ сообщении с реакциями в этом канале
+                // (не важно, кто его написал — ты, другой человек и т.д.)
+                if (!maxPos) {
+                    const recentMessages = await interaction.channel.messages.fetch({ limit: 50 });
+                    const sourceMessage = recentMessages.find(
+                        (m) => !m.author.bot && m.reactions.cache.size > 0
+                    );
+
+                    if (!sourceMessage) {
+                        await interaction.editReply({
+                            content:
+                                '❌ Не нашёл сообщение с реакциями среди последних 50 сообщений этого канала. Укажи `/game positions:<число>` вручную.'
+                        });
+                        return;
+                    }
+
+                    const reactorIds = new Set();
+                    for (const reaction of sourceMessage.reactions.cache.values()) {
+                        try {
+                            const users = await reaction.users.fetch();
+                            users.forEach((u) => {
+                                if (!u.bot) reactorIds.add(u.id);
+                            });
+                        } catch (err) {
+                            console.error('⚠️ Не удалось получить пользователей реакции:', err);
+                        }
+                    }
+
+                    if (reactorIds.size === 0) {
+                        await interaction.editReply({ content: '❌ На этом сообщении пока нет реакций от людей.' });
+                        return;
+                    }
+
+                    maxPos = reactorIds.size;
+                }
+
+                if (maxPos < 1) {
+                    await interaction.editReply({ content: '❌ Количество позиций должно быть больше 0.' });
+                    return;
+                }
+                if (maxPos > MAX_BUTTONS) {
+                    maxPos = MAX_BUTTONS;
+                }
+
                 const threadName = `🎮 Игра на ${maxPos} мест`;
 
-                const existingThread = interaction.channel.threads.cache.find(
-                    (t) => t.name === threadName && !t.archived
-                );
+                // Берём АКТУАЛЬНЫЙ список активных веток через API, а не
+                // устаревший кэш — иначе можно "воскресить" уже
+                // заархивированную ветку и получить ложный успех.
+                const active = await interaction.channel.threads.fetchActive();
+                let targetThread = active.threads.find((t) => t.name === threadName);
 
-                let targetThread = existingThread;
-
-                if (!existingThread) {
+                if (!targetThread) {
                     targetThread = await interaction.channel.threads.create({
                         name: threadName,
                         autoArchiveDuration: 60,
@@ -197,6 +234,8 @@ client.on('interactionCreate', async (interaction) => {
                     await targetThread.send(
                         `🎮 **Добро пожаловать в игру!**\n📊 **${maxPos}** позиций доступно.\n💡 Нажимай на кнопки чтобы занять место!`
                     );
+                } else if (targetThread.archived) {
+                    await targetThread.setArchived(false).catch(() => {});
                 }
 
                 let game = games.get(targetThread.id);
@@ -210,7 +249,7 @@ client.on('interactionCreate', async (interaction) => {
                 await showGameMenu(targetThread);
 
                 await interaction.editReply({
-                    content: `✅ Создана ветка **${threadName}**! Переходи туда чтобы играть.`
+                    content: `✅ Готово! Ветка **${threadName}**: <#${targetThread.id}>`
                 });
             } catch (error) {
                 console.error('❌ Ошибка создания игры:', error);
