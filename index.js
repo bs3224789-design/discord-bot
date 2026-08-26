@@ -49,8 +49,16 @@ process.on('uncaughtException', (err) => {
 // ===== Команды =====
 const commands = [
     {
-        name: 'game',
-        description: 'Создать новую игру в ветке (сам посчитает по реакциям на последнем сообщении в канале)'
+        name: 'start',
+        description: 'Создать приватный канал+игру по реакциям на последнем сообщении с реакциями в канале'
+    },
+    // Команда контекстного меню сообщения (правый клик по сообщению →
+    // Apps). type: 3 = MESSAGE. Discord требует пустую description и
+    // запрещает options для контекстных команд.
+    {
+        name: 'Собрать по реакциям',
+        type: 3,
+        description: ''
     },
     {
         name: 'add',
@@ -153,6 +161,92 @@ async function replySafe(interaction, payload) {
     }
 }
 
+// Собирает Map<id, User> всех НЕ-ботов, поставивших хотя бы одну
+// реакцию (любой эмодзи) на сообщение.
+async function collectReactors(message) {
+    const collected = new Map();
+    if (!message.reactions) return collected;
+
+    for (const reaction of message.reactions.cache.values()) {
+        try {
+            const users = await reaction.users.fetch();
+            users.forEach((u) => {
+                if (!u.bot) collected.set(u.id, u);
+            });
+        } catch (err) {
+            console.error('⚠️ Не удалось получить пользователей реакции:', err);
+        }
+    }
+
+    return collected;
+}
+
+// Создаёт приватный канал (доступ только organizer + reactors +
+// хай-ранги) и разворачивает в нём игру на collectedUsers.size
+// позиций. Возвращает созданный канал.
+async function createPrivateGameChannel({ guild, parentChannel, organizerUser, collectedUsers, originalMessage }) {
+    const maxPos = Math.min(collectedUsers.size, MAX_BUTTONS);
+
+    const highRankMembers = await getHighRankMembers(guild);
+
+    const membersToGrant = new Map();
+    membersToGrant.set(organizerUser.id, organizerUser.tag);
+    for (const [id, u] of collectedUsers) membersToGrant.set(id, u.tag);
+    for (const [id, m] of highRankMembers) membersToGrant.set(id, m.user.tag);
+
+    let parentCategoryId = null;
+    try {
+        parentCategoryId = parentChannel.isThread() ? parentChannel.parent?.parentId ?? null : parentChannel.parentId ?? null;
+    } catch {
+        parentCategoryId = null;
+    }
+
+    const safeChannelName = organizerUser.username
+        .toLowerCase()
+        .replace(/[^a-z0-9-]/g, '-')
+        .replace(/-+/g, '-')
+        .slice(0, 60);
+
+    const permissionOverwrites = [
+        { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+        {
+            id: client.user.id,
+            allow: [
+                PermissionFlagsBits.ViewChannel,
+                PermissionFlagsBits.SendMessages,
+                PermissionFlagsBits.ManageChannels,
+                PermissionFlagsBits.ManageRoles,
+                PermissionFlagsBits.ReadMessageHistory
+            ]
+        },
+        ...[...membersToGrant.keys()].map((id) => ({
+            id,
+            allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
+        }))
+    ];
+
+    const privateChannel = await guild.channels.create({
+        name: `secret-${safeChannelName || 'chat'}-${Date.now().toString(36).slice(-4)}`,
+        type: ChannelType.GuildText,
+        parent: parentCategoryId || undefined,
+        permissionOverwrites,
+        reason: `Приватный канал по реакциям на сообщение ${originalMessage.id} (запросил ${organizerUser.tag})`
+    });
+
+    games.set(privateChannel.id, { maxPosition: maxPos, players: {} });
+
+    const mentions = [...collectedUsers.values()].map((u) => `<@${u.id}>`).join(', ');
+    await privateChannel
+        .send(
+            `👋 Приватный канал только для тех, кто поставил реакцию на [это сообщение](${originalMessage.url}) (+ хай-ранги).\n👥 Поставили реакцию: ${mentions}`
+        )
+        .catch(() => {});
+
+    await showGameMenu(privateChannel);
+
+    return privateChannel;
+}
+
 // ===================================================================
 // Слеш-команды
 // ===================================================================
@@ -162,10 +256,21 @@ client.on('interactionCreate', async (interaction) => {
     try {
         const channelId = interaction.channel?.id;
 
-        if (interaction.commandName === 'game') {
-            if (!interaction.channel || interaction.channel.isThread()) {
+        if (interaction.commandName === 'start') {
+            const channel = interaction.channel;
+
+            if (!channel || channel.isThread()) {
                 await interaction.reply({
-                    content: '❌ Создавать игру нужно в обычном канале, а не внутри ветки.',
+                    content: '❌ Используй /start в обычном канале, а не внутри ветки.',
+                    ephemeral: true
+                });
+                return;
+            }
+
+            const botPerms = channel.permissionsFor(client.user);
+            if (!botPerms || !botPerms.has(PermissionFlagsBits.ManageChannels) || !botPerms.has(PermissionFlagsBits.ManageRoles)) {
+                await interaction.reply({
+                    content: '❌ У бота нет прав Manage Channels / Manage Roles в этом канале.',
                     ephemeral: true
                 });
                 return;
@@ -174,84 +279,37 @@ client.on('interactionCreate', async (interaction) => {
             await interaction.deferReply({ ephemeral: true });
 
             try {
-                // /game больше не принимает параметров. Ищем САМОЕ СВЕЖЕЕ
-                // сообщение с реакциями в этом канале (не важно, кто его
-                // написал) и считаем позиции по числу реагировавших. Если
-                // такого сообщения нет — используем 10 по умолчанию.
-                let maxPos = 10;
+                // Ищем самое свежее сообщение с реакциями в этом канале
+                // (не важно, кто его написал).
+                const recentMessages = await channel.messages.fetch({ limit: 50 });
+                const original = recentMessages.find((m) => !m.author.bot && m.reactions.cache.size > 0);
 
-                const recentMessages = await interaction.channel.messages.fetch({ limit: 50 });
-                const sourceMessage = recentMessages.find(
-                    (m) => !m.author.bot && m.reactions.cache.size > 0
-                );
-
-                if (sourceMessage) {
-                    const reactorIds = new Set();
-                    for (const reaction of sourceMessage.reactions.cache.values()) {
-                        try {
-                            const users = await reaction.users.fetch();
-                            users.forEach((u) => {
-                                if (!u.bot) reactorIds.add(u.id);
-                            });
-                        } catch (err) {
-                            console.error('⚠️ Не удалось получить пользователей реакции:', err);
-                        }
-                    }
-
-                    if (reactorIds.size > 0) {
-                        maxPos = reactorIds.size;
-                    }
-                }
-
-                if (maxPos < 1) {
-                    await interaction.editReply({ content: '❌ Количество позиций должно быть больше 0.' });
+                if (!original) {
+                    await interaction.editReply({
+                        content: '❌ Не нашёл сообщение с реакциями среди последних 50 сообщений этого канала.'
+                    });
                     return;
                 }
-                if (maxPos > MAX_BUTTONS) {
-                    maxPos = MAX_BUTTONS;
+
+                const collectedUsers = await collectReactors(original);
+
+                if (collectedUsers.size === 0) {
+                    await interaction.editReply({ content: 'ℹ️ На этом сообщении пока нет реакций от людей.' });
+                    return;
                 }
 
-                const threadName = `🎮 Игра на ${maxPos} мест`;
-
-                // Берём АКТУАЛЬНЫЙ список активных веток через API, а не
-                // устаревший кэш — иначе можно "воскресить" уже
-                // заархивированную ветку и получить ложный успех.
-                const active = await interaction.channel.threads.fetchActive();
-                let targetThread = active.threads.find((t) => t.name === threadName);
-
-                if (!targetThread) {
-                    targetThread = await interaction.channel.threads.create({
-                        name: threadName,
-                        autoArchiveDuration: 60,
-                        type: ChannelType.PublicThread,
-                        reason: 'Новая игра Битва Семей'
-                    });
-
-                    await targetThread.send(
-                        `🎮 **Добро пожаловать в игру!**\n📊 **${maxPos}** позиций доступно.\n💡 Нажимай на кнопки чтобы занять место!`
-                    );
-                } else if (targetThread.archived) {
-                    await targetThread.setArchived(false).catch(() => {});
-                }
-
-                let game = games.get(targetThread.id);
-                if (!game) {
-                    game = { maxPosition: maxPos, players: {} };
-                    games.set(targetThread.id, game);
-                } else if (maxPos > game.maxPosition) {
-                    game.maxPosition = maxPos;
-                }
-
-                await showGameMenu(targetThread);
-
-                await interaction.editReply({
-                    content: `✅ Готово! Ветка **${threadName}**: <#${targetThread.id}>`
+                const privateChannel = await createPrivateGameChannel({
+                    guild: interaction.guild,
+                    parentChannel: channel,
+                    organizerUser: interaction.user,
+                    collectedUsers,
+                    originalMessage: original
                 });
+
+                await interaction.editReply({ content: `✅ Создан приватный канал: ${privateChannel}` });
             } catch (error) {
-                console.error('❌ Ошибка создания игры:', error);
-                await replySafe(interaction, {
-                    content: '❌ Не удалось создать ветку. Проверь права бота (Manage Threads / Manage Channels).'
-                });
+                console.error('❌ Ошибка /start:', error);
+                await replySafe(interaction, { content: '❌ Не удалось создать приватный канал. Проверь права бота.' });
             }
             return;
         }
@@ -262,8 +320,15 @@ client.on('interactionCreate', async (interaction) => {
                 return;
             }
 
-            let game = games.get(channelId);
-            if (!game) game = { maxPosition: 10, players: {} };
+            const existingGame = games.get(channelId);
+            if (!existingGame) {
+                await interaction.reply({
+                    content: '❌ В этом канале нет активной игры. Создай её через /start или правым кликом по сообщению с реакциями → Apps → "Собрать по реакциям".',
+                    ephemeral: true
+                });
+                return;
+            }
+            const game = existingGame;
 
             let newMax = interaction.options.getInteger('positions');
 
@@ -389,7 +454,7 @@ client.on('interactionCreate', async (interaction) => {
 
         const game = games.get(interaction.channel.id);
         if (!game) {
-            await interaction.reply({ content: '❌ Нет активной игры. Создай /game', ephemeral: true });
+            await interaction.reply({ content: '❌ Нет активной игры в этом канале.', ephemeral: true });
             return;
         }
 
@@ -494,130 +559,69 @@ async function showGameMenu(channel) {
 }
 
 // ===================================================================
-// Авто-создание приватного КАНАЛА по реакциям + игра внутри него
+// Команда контекстного меню сообщения: "Собрать по реакциям"
 //
-// Как это работает: пользователь пишет сообщение, люди ставят на него
-// реакции (любой эмодзи). Когда автор исходного сообщения отвечает на
-// него обычным Reply в Discord, бот собирает всех, кто поставил
-// реакцию, и создаёт ПРИВАТНЫЙ КАНАЛ (права доступа через
-// permissionOverwrites — надёжнее, чем добавление участников в ветку),
-// который видят только они (+ автор + хай-ранги). Внутри сразу
-// разворачивается игра с кнопками-позициями — по числу людей,
-// поставивших реакцию. Если отвечает не автор исходного сообщения —
-// ничего не происходит (защита от случайных срабатываний).
+// Discord НЕ передаёт слэш-командам информацию о том, на какое
+// сообщение ты отвечал (Reply) — это ограничение самого API, не
+// обойти его в коде никак. Единственный способ указать боту "вот
+// ИМЕННО это сообщение" — команда контекстного меню: правый клик
+// (или долгий тап на телефоне) прямо по сообщению → Apps → выбрать
+// команду из списка. Discord передаёт боту точный ID этого сообщения
+// через interaction.targetMessage.
 // ===================================================================
-client.on('messageCreate', async (message) => {
+client.on('interactionCreate', async (interaction) => {
+    if (!interaction.isMessageContextMenuCommand()) return;
+    if (interaction.commandName !== 'Собрать по реакциям') return;
+
     try {
-        if (message.author.bot) return;
-        if (!message.guild) return;
-        if (!message.reference || !message.reference.messageId) return;
+        const original = interaction.targetMessage;
+        const channel = interaction.channel;
 
-        const channel = message.channel;
-        if (channel.isThread()) return; // ветку внутри ветки не создаём
-
-        let original;
-        try {
-            original = await channel.messages.fetch(message.reference.messageId);
-        } catch (err) {
-            return; // сообщение недоступно/удалено
+        if (!channel || channel.isThread()) {
+            await interaction.reply({ content: '❌ Используй эту команду в обычном канале, а не внутри ветки.', ephemeral: true });
+            return;
         }
 
-        if (!original) return;
-        if (original.author.id !== message.author.id) return; // отвечать может только автор исходного сообщения
-        if (!original.reactions || original.reactions.cache.size === 0) return;
-
-        // Собираем всех уникальных пользователей, поставивших любую реакцию
-        const collectedUsers = new Map();
-        for (const reaction of original.reactions.cache.values()) {
-            try {
-                const users = await reaction.users.fetch();
-                users.forEach((u) => {
-                    if (!u.bot) collectedUsers.set(u.id, u);
-                });
-            } catch (err) {
-                console.error('⚠️ Не удалось получить пользователей реакции:', err);
-            }
-        }
-
-        if (collectedUsers.size === 0) {
-            await message.reply({ content: 'ℹ️ Пока никто не поставил реакцию на это сообщение.' }).catch(() => {});
+        if (!original.reactions || original.reactions.cache.size === 0) {
+            await interaction.reply({ content: 'ℹ️ На этом сообщении нет реакций.', ephemeral: true });
             return;
         }
 
         const botPerms = channel.permissionsFor(client.user);
         if (!botPerms || !botPerms.has(PermissionFlagsBits.ManageChannels) || !botPerms.has(PermissionFlagsBits.ManageRoles)) {
-            await message
-                .reply({ content: '❌ У бота нет прав Manage Channels / Manage Roles в этом канале — не могу создать приватный канал.' })
-                .catch(() => {});
+            await interaction.reply({
+                content: '❌ У бота нет прав Manage Channels / Manage Roles в этом канале.',
+                ephemeral: true
+            });
             return;
         }
 
-        const maxPos = Math.min(collectedUsers.size, MAX_BUTTONS);
+        await interaction.deferReply({ ephemeral: true });
 
-        // Хай-ранги получают доступ автоматически, даже если сами
-        // реакцию не ставили — чтобы модерация всегда видела канал.
-        // Больше никто, кроме них и реагировавших, войти не сможет —
-        // у @everyone доступ явно запрещён (deny ViewChannel).
-        const highRankMembers = await getHighRankMembers(message.guild);
-
-        const membersToGrant = new Map();
-        membersToGrant.set(message.author.id, message.author.tag);
-        for (const [id, u] of collectedUsers) membersToGrant.set(id, u.tag);
-        for (const [id, m] of highRankMembers) membersToGrant.set(id, m.user.tag);
-
-        let parentCategoryId = null;
         try {
-            parentCategoryId = channel.parentId ?? null;
-        } catch {
-            parentCategoryId = null;
+            const collectedUsers = await collectReactors(original);
+
+            if (collectedUsers.size === 0) {
+                await interaction.editReply({ content: 'ℹ️ На этом сообщении пока нет реакций от людей.' });
+                return;
+            }
+
+            const privateChannel = await createPrivateGameChannel({
+                guild: interaction.guild,
+                parentChannel: channel,
+                organizerUser: interaction.user,
+                collectedUsers,
+                originalMessage: original
+            });
+
+            await interaction.editReply({ content: `✅ Создан приватный канал: ${privateChannel}` });
+        } catch (error) {
+            console.error('❌ Ошибка "Собрать по реакциям":', error);
+            await replySafe(interaction, { content: '❌ Не удалось создать приватный канал. Проверь права бота.' });
         }
-
-        const safeChannelName = message.author.username
-            .toLowerCase()
-            .replace(/[^a-z0-9-]/g, '-')
-            .replace(/-+/g, '-')
-            .slice(0, 60);
-
-        const permissionOverwrites = [
-            { id: message.guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
-            {
-                id: client.user.id,
-                allow: [
-                    PermissionFlagsBits.ViewChannel,
-                    PermissionFlagsBits.SendMessages,
-                    PermissionFlagsBits.ManageChannels,
-                    PermissionFlagsBits.ManageRoles,
-                    PermissionFlagsBits.ReadMessageHistory
-                ]
-            },
-            ...[...membersToGrant.keys()].map((id) => ({
-                id,
-                allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
-            }))
-        ];
-
-        const privateChannel = await message.guild.channels.create({
-            name: `secret-${safeChannelName || 'chat'}-${Date.now().toString(36).slice(-4)}`,
-            type: ChannelType.GuildText,
-            parent: parentCategoryId || undefined,
-            permissionOverwrites,
-            reason: `Приватный канал по реакциям на сообщение ${original.id} (${message.author.tag})`
-        });
-
-        games.set(privateChannel.id, { maxPosition: maxPos, players: {} });
-
-        const mentions = [...collectedUsers.values()].map((u) => `<@${u.id}>`).join(', ');
-        await privateChannel
-            .send(
-                `👋 ${message.author}, это приватный канал только для тех, кто поставил реакцию на твоё сообщение (+ хай-ранги).\n👥 Поставили реакцию: ${mentions}`
-            )
-            .catch(() => {});
-
-        await showGameMenu(privateChannel);
-
-        await message.reply({ content: `✅ Создан приватный канал: ${privateChannel}` }).catch(() => {});
     } catch (error) {
-        console.error('❌ Ошибка создания приватного канала по реакциям:', error);
+        console.error('❌ Ошибка обработки контекстной команды:', error);
+        await replySafe(interaction, { content: '❌ Произошла ошибка.' });
     }
 });
 
